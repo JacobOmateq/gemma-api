@@ -20,23 +20,42 @@ OLLAMA_URL = "http://ollama:11434"
 
 class TitleRequest(BaseModel):
     title: str
+    system_prompt: Optional[str] = None
 
-async def call_ollama_with_retry(client: httpx.AsyncClient, title: str, max_retries: int = 3) -> Optional[dict]:
+class ResponseModel(BaseModel):
+    content: Optional[dict] = None
+
+def clean_json_response(text: str) -> str:
+    """Clean the response text by removing markdown code blocks and extra whitespace."""
+    # Remove markdown code blocks if present
+    cleaned = text.replace('```json', '').replace('```', '').strip()
+    return cleaned
+
+async def call_ollama_with_retry(client: httpx.AsyncClient, title: str, system_prompt: Optional[str] = None, max_retries: int = 3) -> Optional[dict]:
     for attempt in range(max_retries):
         try:
             logger.info(f"Attempt {attempt + 1} to call Ollama")
+            
+            # Use provided system prompt or fall back to default
+            prompt_to_use = system_prompt or llm_settings['system_prompt']
+            
+            # Complete the prompt with the input text
+            full_prompt = f"{prompt_to_use}{title}\nOutput:"
+            
             response = await client.post(
                 f"{OLLAMA_URL}/api/generate",
                 json={
                     "model": llm_settings["model"],
-                    "prompt": f"{llm_settings['system_prompt']}\n\nTitel: {title}",
+                    "prompt": full_prompt,
                     "stream": False
                 },
                 timeout=60.0  # Increased timeout to 60 seconds
             )
             
             if response.status_code == 200:
-                return response.json()
+                result = response.json()
+                logger.info(f"Ollama raw response: {result}")
+                return result
             
             logger.error(f"Attempt {attempt + 1} failed with status {response.status_code}")
             if attempt < max_retries - 1:
@@ -53,16 +72,18 @@ async def call_ollama_with_retry(client: httpx.AsyncClient, title: str, max_retr
     
     return None
 
-@app.post("/extract_department")
+@app.post("/extract_department", response_model=ResponseModel)
 async def extract_department(request: TitleRequest):
     try:
         logger.info(f"Received request with title: {request.title}")
+        if request.system_prompt:
+            logger.info(f"Using custom system prompt")
         
         async with httpx.AsyncClient(
             timeout=60.0,
             limits=httpx.Limits(max_keepalive_connections=5, max_connections=10)
         ) as client:
-            result = await call_ollama_with_retry(client, request.title)
+            result = await call_ollama_with_retry(client, request.title, request.system_prompt)
             
             if result is None:
                 raise HTTPException(
@@ -71,11 +92,19 @@ async def extract_department(request: TitleRequest):
                 )
             
             try:
-                department_json = json.loads(result['response'])
-                return department_json
+                response_text = result.get('response', '{}')
+                logger.info(f"Response text to parse: {response_text}")
+                
+                # Clean the response before parsing
+                cleaned_text = clean_json_response(response_text)
+                logger.info(f"Cleaned text to parse: {cleaned_text}")
+                
+                department_json = json.loads(cleaned_text)
+                return ResponseModel(content=department_json)
             except (json.JSONDecodeError, KeyError) as e:
                 logger.error(f"Error parsing response: {str(e)}")
-                return {"enhet": "Okänd"}
+                logger.error(f"Failed to parse response text: {response_text}")
+                return ResponseModel(content=None)
                 
     except Exception as e:
         logger.error(f"Unexpected error: {str(e)}", exc_info=True)
