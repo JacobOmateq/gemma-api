@@ -1,21 +1,20 @@
 # gemma-api
 
-A FastAPI service that uses Ollama to run the Gemma model for extracting structured information from text. The service provides a REST API endpoint that accepts text input and returns JSON-formatted extracted information.
+A FastAPI service that provides a REST API for interacting with the Gemma language model through Ollama. The service is designed to be flexible and can be used for various natural language processing tasks by customizing the system prompt.
 
 ## Features
 
-- REST API endpoint for text analysis
-- Configurable system prompts
+- Generic REST API for LLM interaction
+- Configurable system prompts for different use cases
 - Docker containerization
 - Automatic model loading
 - Health check endpoint
 - Retry mechanism for reliability
-- Customizable JSON extraction
+- JSON response formatting
 
 ## Prerequisites
 
 - Docker and Docker Compose
-- `jq` command-line tool (for script functionality)
 
 ## Quick Start
 
@@ -50,22 +49,47 @@ The default system prompt is configured in `llm_settings.json`. You can customiz
 
 ## API Endpoints
 
-### Extract Information
+### Generate Response
 
 ```bash
-curl --location 'http://localhost:8000/extract_department' \
+curl --location 'http://localhost:8000/generate' \
 --header 'Content-Type: application/json' \
 --data '{
-    "title": "Your text here",
-    "system_prompt": "Optional custom prompt"
+    "text": "Your input text here",
+    "system_prompt": "Optional custom prompt to define the task"
 }'
+```
+
+Example use cases:
+1. Information Extraction:
+```json
+{
+    "text": "Meeting with John tomorrow at 2 PM",
+    "system_prompt": "Extract event details and return them as JSON with fields: type, person, time"
+}
+```
+
+2. Text Classification:
+```json
+{
+    "text": "I love this product, it works great!",
+    "system_prompt": "Analyze the sentiment of this text and return JSON with fields: sentiment, confidence"
+}
+```
+
+3. Structured Data Generation:
+```json
+{
+    "text": "Create a character profile for a fantasy story",
+    "system_prompt": "Generate a character profile and return as JSON with fields: name, race, class, abilities, background"
+}
 ```
 
 #### Response Format
 ```json
 {
     "content": {
-        // Extracted information in JSON format
+        // JSON formatted response
         // Structure depends on the system prompt
     }
 }

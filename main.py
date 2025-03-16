@@ -18,11 +18,13 @@ app = FastAPI()
 
 OLLAMA_URL = "http://ollama:11434"
 
-class TitleRequest(BaseModel):
-    title: str
+class LLMRequest(BaseModel):
+    """Request model for LLM interaction."""
+    text: str
     system_prompt: Optional[str] = None
 
-class ResponseModel(BaseModel):
+class LLMResponse(BaseModel):
+    """Response model for LLM interaction."""
     content: Optional[dict] = None
 
 def clean_json_response(text: str) -> str:
@@ -31,7 +33,7 @@ def clean_json_response(text: str) -> str:
     cleaned = text.replace('```json', '').replace('```', '').strip()
     return cleaned
 
-async def call_ollama_with_retry(client: httpx.AsyncClient, title: str, system_prompt: Optional[str] = None, max_retries: int = 3) -> Optional[dict]:
+async def call_ollama_with_retry(client: httpx.AsyncClient, text: str, system_prompt: Optional[str] = None, max_retries: int = 3) -> Optional[dict]:
     for attempt in range(max_retries):
         try:
             logger.info(f"Attempt {attempt + 1} to call Ollama")
@@ -40,7 +42,7 @@ async def call_ollama_with_retry(client: httpx.AsyncClient, title: str, system_p
             prompt_to_use = system_prompt or llm_settings['system_prompt']
             
             # Complete the prompt with the input text
-            full_prompt = f"{prompt_to_use}{title}\nOutput:"
+            full_prompt = f"{prompt_to_use}{text}\nOutput:"
             
             response = await client.post(
                 f"{OLLAMA_URL}/api/generate",
@@ -72,10 +74,11 @@ async def call_ollama_with_retry(client: httpx.AsyncClient, title: str, system_p
     
     return None
 
-@app.post("/extract_department", response_model=ResponseModel)
-async def extract_department(request: TitleRequest):
+@app.post("/generate", response_model=LLMResponse)
+async def generate(request: LLMRequest):
+    """Generate structured JSON response from text input using the LLM."""
     try:
-        logger.info(f"Received request with title: {request.title}")
+        logger.info(f"Received request with text: {request.text}")
         if request.system_prompt:
             logger.info(f"Using custom system prompt")
         
@@ -83,12 +86,12 @@ async def extract_department(request: TitleRequest):
             timeout=60.0,
             limits=httpx.Limits(max_keepalive_connections=5, max_connections=10)
         ) as client:
-            result = await call_ollama_with_retry(client, request.title, request.system_prompt)
+            result = await call_ollama_with_retry(client, request.text, request.system_prompt)
             
             if result is None:
                 raise HTTPException(
                     status_code=503,
-                    detail="Failed to get response from Ollama after multiple attempts"
+                    detail="Failed to get response from LLM after multiple attempts"
                 )
             
             try:
@@ -99,12 +102,12 @@ async def extract_department(request: TitleRequest):
                 cleaned_text = clean_json_response(response_text)
                 logger.info(f"Cleaned text to parse: {cleaned_text}")
                 
-                department_json = json.loads(cleaned_text)
-                return ResponseModel(content=department_json)
+                parsed_json = json.loads(cleaned_text)
+                return LLMResponse(content=parsed_json)
             except (json.JSONDecodeError, KeyError) as e:
                 logger.error(f"Error parsing response: {str(e)}")
                 logger.error(f"Failed to parse response text: {response_text}")
-                return ResponseModel(content=None)
+                return LLMResponse(content=None)
                 
     except Exception as e:
         logger.error(f"Unexpected error: {str(e)}", exc_info=True)
